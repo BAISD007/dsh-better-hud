@@ -1,7 +1,6 @@
 {
   "name": "dsh-better-hud",
   "version": "0.1.0",
-  "private": true,
   "description": "顶部余额 / 今日已用 / 峰谷倒计时，以及每轮对话消耗（按真实 usage 与 DeepSeek 峰谷价目表计算）。",
   "type": "module",
   "main": "./index.js",

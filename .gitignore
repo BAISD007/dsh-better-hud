@@ -1,5 +1,6 @@
 .probe/
 .rollback/
+.npm-cache/
 node_modules/
 *.log
 .DS_Store
