@@ -7,7 +7,7 @@
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 [![GitHub stars](https://img.shields.io/github/stars/BAISD007/dsh-better-hud?style=flat)](https://github.com/BAISD007/dsh-better-hud)
 
-> 版本 0.1.0，已提交 npm（审核通过后 npm 徽标生效）。设计取舍与阶段记录见 [ROUTE.md](./ROUTE.md)。
+> 版本 0.1.1，已发布 npm（npm 页面自 0.1.1 起含界面截图）。设计取舍与阶段记录见 [ROUTE.md](./ROUTE.md)。
 
 ---
 
