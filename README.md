@@ -7,7 +7,19 @@
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 [![GitHub stars](https://img.shields.io/github/stars/BAISD007/dsh-better-hud?style=flat)](https://github.com/BAISD007/dsh-better-hud)
 
-> 版本 0.1.0，尚未发布 npm（npm 徽标在发布后生效）。设计取舍与阶段记录见 [ROUTE.md](./ROUTE.md)。
+> 版本 0.1.0，已提交 npm（审核通过后 npm 徽标生效）。设计取舍与阶段记录见 [ROUTE.md](./ROUTE.md)。
+
+---
+
+## 界面
+
+**标题栏 HUD**：余额 / 今日已用 / 峰谷倒计时，跟「应用 / 编辑」同字体、同字号、同字色。
+
+![标题栏 HUD](https://raw.githubusercontent.com/BAISD007/dsh-better-hud/main/docs/images/hud-topbar.png)
+
+**每轮消耗**：助手消息动作行里的 `本轮消耗 ¥x.xxxx`，与官方 `用量 / 时间` 同为次级灰。
+
+![每轮消耗](https://raw.githubusercontent.com/BAISD007/dsh-better-hud/main/docs/images/turn-cost.png)
 
 ---
 
