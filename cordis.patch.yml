@@ -1,0 +1,6 @@
+# dsh-better-hud bundle patch。
+# 由 Plugin Manager / `dsh plugin` 安装后自动生效；不要手工往 profile 的
+# cordis.patch.yml 里再 insert 同一个 id（重复 id 会让 Loader 启动失败）。
+- insert:
+    - id: dsh-better-hud
+      name: 'dsh-better-hud'

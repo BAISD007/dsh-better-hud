@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Usage & Balance HUD",
+    "description": "Shows DeepSeek balance, today's observed spend and the peak/off-peak countdown in the title bar, plus a per-turn cost on each assistant message (real usage times the peak/off-peak price table)."
+  }
+}

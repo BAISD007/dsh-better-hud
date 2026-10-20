@@ -1,0 +1,53 @@
+{
+  "name": "dsh-better-hud",
+  "version": "0.1.0",
+  "private": true,
+  "description": "顶部余额 / 今日已用 / 峰谷倒计时，以及每轮对话消耗（按真实 usage 与 DeepSeek 峰谷价目表计算）。",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "README.md",
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "usage",
+    "balance",
+    "deepseek"
+  ],
+  "author": "BAISD007",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BAISD007/dsh-better-hud.git"
+  },
+  "homepage": "https://github.com/BAISD007/dsh-better-hud#readme",
+  "bugs": {
+    "url": "https://github.com/BAISD007/dsh-better-hud/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "license": "MIT"
+}

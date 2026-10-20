@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Usage and balance HUD">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f6bff"/>
+      <stop offset="1" stop-color="#00b3a4"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#g)"/>
+  <path d="M22 22h20M22 22v20M42 22v20M22 42h20" stroke="#ffffff" stroke-opacity=".35" stroke-width="2" fill="none"/>
+  <path d="M26 24l8 10 8-10M34 34v10" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <circle cx="46" cy="46" r="7" fill="#ffffff" fill-opacity=".22"/>
+  <path d="M42.5 46.5l2.4 2.4 4.6-5" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>
