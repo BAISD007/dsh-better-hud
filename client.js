@@ -898,8 +898,8 @@ window.__ModuleLoader__.load({
       const play = (card) => {
         if (stopped || !card || !card.classList || !card.isConnected) return
         if (card.classList.contains(POP_CLASS)) return
-        const now = Date.now()
-        if (now - (animated.get(card) || 0) < 600) return
+        // 同一个卡片元素只播一次：它一直挂着就说明还停在这次悬停上，别再重播。
+        if (animated.has(card)) return
         let cs = null
         try { cs = getComputedStyle(card) } catch (err) { cs = null }
         if (!cs) return
@@ -907,7 +907,7 @@ window.__ModuleLoader__.load({
         if (card.getClientRects().length === 0) return
         // 宿主自己已经在动这张卡的话不插手。
         if (cs.animationName && cs.animationName !== 'none') return
-        animated.set(card, now)
+        animated.set(card, Date.now())
         watch.push(card)
         card.classList.add(POP_CLASS)
       }
@@ -931,11 +931,15 @@ window.__ModuleLoader__.load({
         frame = window.requestAnimationFrame(scan)
       }
 
-      // 悬停后卡片可能过一小会儿才出来：鼠标进到侧边栏行上时排几次扫描。
+      // 悬停后卡片可能过一小会儿才出来：鼠标从外面进到侧边栏行时才排扫描；
+      // 在同一行内部移动（标题文字、图标之间）不算新的悬停，直接忽略。
       const onPointer = (event) => {
         const target = event.target
         if (!(target instanceof Element)) return
-        if (target.closest(HOVER_ROW) === null) return
+        const row = target.closest(HOVER_ROW)
+        if (row === null) return
+        const from = event.relatedTarget
+        if (from instanceof Node && row.contains(from)) return
         const now = Date.now()
         if (now - lastTrigger < 200) return
         lastTrigger = now
@@ -965,7 +969,8 @@ window.__ModuleLoader__.load({
         observer.observe(document.body, { childList: true, subtree: true })
       } catch (err) { observer = null }
 
-      // 已播过的卡片：等它隐藏后把标记复位，下次再悬停还能播。
+      // 已播过的卡片：等它真的隐藏后把标记复位，下次再悬停还能播。
+      // 只看 display / visibility / opacity —— 布局上一瞬间没 rect 不算隐藏。
       const sweepTimer = setInterval(() => {
         if (stopped) return
         for (let i = watch.length - 1; i >= 0; i -= 1) {
@@ -974,7 +979,7 @@ window.__ModuleLoader__.load({
           let cs = null
           try { cs = getComputedStyle(card) } catch (err) { cs = null }
           if (!cs) continue
-          const hidden = cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.02 || card.getClientRects().length === 0
+          const hidden = cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.02
           if (hidden) { animated.delete(card); watch.splice(i, 1) }
         }
       }, 200)
