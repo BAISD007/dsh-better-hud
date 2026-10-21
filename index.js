@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS = {
   turnCost: true,
   hideBalanceForNonOfficial: true,
   switchMotion: true,
+  hoverMotion: true,
 }
 let settingsCache = null
 
@@ -50,7 +51,10 @@ function sanitizeSettings(input, base) {
   const switchMotion = input && typeof input.switchMotion === 'boolean'
     ? input.switchMotion
     : fallback.switchMotion !== false
-  return { version: 1, enabled, items, turnCost, hideBalanceForNonOfficial, switchMotion }
+  const hoverMotion = input && typeof input.hoverMotion === 'boolean'
+    ? input.hoverMotion
+    : fallback.hoverMotion !== false
+  return { version: 1, enabled, items, turnCost, hideBalanceForNonOfficial, switchMotion, hoverMotion }
 }
 
 function loadSettings() {

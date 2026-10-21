@@ -255,7 +255,7 @@ window.__ModuleLoader__.load({
     }
 
     /** 设置共享：顶栏、每轮消耗、设置页读同一份，保存后即时生效。 */
-    const DEFAULT_SETTINGS_STATE = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true }
+    const DEFAULT_SETTINGS_STATE = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true, hoverMotion: true }
     let hudSettings = null
     const hudSettingsListeners = new Set()
 
@@ -517,7 +517,7 @@ window.__ModuleLoader__.load({
     }
 
     /* ── 设置页 ─────────────────────────────────────────────────── */
-    const HUD_SETTINGS_FALLBACK = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true }
+    const HUD_SETTINGS_FALLBACK = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true, hoverMotion: true }
     const HUD_ITEMS = [
       { id: 'balance', title: '余额', desc: 'DeepSeek 账户实时余额' },
       { id: 'today', title: '今日已用', desc: '按余额观测累计的今日消费' },
@@ -647,6 +647,19 @@ window.__ModuleLoader__.load({
               on: settings.switchMotion !== false,
               label: '会话切换动效',
               onChange: (on) => commit({ ...settings, switchMotion: on }),
+            }),
+          ),
+        ),
+        h('div', { className: 'uwh-set-card' },
+          h('div', { className: 'uwh-set-row' },
+            h('div', { className: 'uwh-set-main' },
+              h('div', { className: 'uwh-set-title' }, '会话悬停卡动效'),
+              h('div', { className: 'uwh-set-desc' }, '鼠标停在侧边栏会话上时，弹出的卡片淡入并轻微缩放'),
+            ),
+            h(Toggle, {
+              on: settings.hoverMotion !== false,
+              label: '会话悬停卡动效',
+              onChange: (on) => commit({ ...settings, hoverMotion: on }),
             }),
           ),
         ),
@@ -881,6 +894,30 @@ window.__ModuleLoader__.load({
       let stopped = false
       let lastTrigger = 0
 
+      // 设置页开关：关掉就不再播，并把已经挂上的动画立刻撤掉。
+      let offCleaned = false
+      const hoverOn = () => !(hudSettings && hudSettings.hoverMotion === false)
+      const resetVisuals = () => {
+        for (const card of watch) {
+          animated.delete(card)
+          try { card.classList.remove(POP_CLASS) } catch (err) { /* ignore */ }
+        }
+        watch.length = 0
+        for (const el of document.querySelectorAll('.' + POP_CLASS)) el.classList.remove(POP_CLASS)
+      }
+      const onSettings = (next) => {
+        if (!next || next.hoverMotion !== false) return
+        resetVisuals()
+        offCleaned = true
+      }
+      hudSettingsListeners.add(onSettings)
+      // 首屏先把设置取回来，免得「已经关掉了还先播一次」。
+      if (!hudSettings) {
+        getJson('/settings')
+          .then((value) => { if (value && value.settings) applyHudSettings(value.settings) })
+          .catch(() => { /* 老宿主没有设置路由时按默认开启 */ })
+      }
+
       // 从 hoverContent 往上找那张卡：优先定位祖先，其次 role=tooltip。
       const cardOf = (content) => {
         let el = content
@@ -896,7 +933,8 @@ window.__ModuleLoader__.load({
       }
 
       const play = (card) => {
-        if (stopped || !card || !card.classList || !card.isConnected) return
+        if (stopped || !hoverOn()) return
+        if (!card || !card.classList || !card.isConnected) return
         if (card.classList.contains(POP_CLASS)) return
         // 同一个卡片元素只播一次：它一直挂着就说明还停在这次悬停上，别再重播。
         if (animated.has(card)) return
@@ -915,6 +953,11 @@ window.__ModuleLoader__.load({
       const scan = () => {
         frame = 0
         if (stopped) return
+        if (!hoverOn()) {
+          if (!offCleaned) { resetVisuals(); offCleaned = true }
+          return
+        }
+        offCleaned = false
         const seen = new Set()
         let contents = []
         try { contents = document.querySelectorAll(HOVER_CARD_CONTENT) } catch (err) { contents = [] }
@@ -996,6 +1039,7 @@ window.__ModuleLoader__.load({
         if (observer) observer.disconnect()
         clearInterval(sweepTimer)
         if (frame) window.cancelAnimationFrame(frame)
+        hudSettingsListeners.delete(onSettings)
         document.removeEventListener('pointerover', onPointer, true)
         document.removeEventListener('animationend', onAnimationEnd, true)
         document.removeEventListener('animationcancel', onAnimationEnd, true)
