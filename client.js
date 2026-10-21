@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
   }
 }
 
-/* 浮层弹出动效：会话标题悬停卡 / 下拉 / 菜单 —— 淡入 + 轻微缩放回正 + 上浮 */
+/* 侧边栏悬停卡弹出动效：淡入 + 轻微缩放回正 + 上浮（只作用于 hoverContent 那张卡） */
 @keyframes uwh-pop-in {
   from { opacity: 0; translate: 0 8px; scale: .955; }
   to { opacity: 1; translate: 0 0; scale: 1; }
@@ -857,17 +857,19 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /* ── 浮层弹出动效（悬停卡 / 下拉 / 菜单）─────────────────────
-     * 判定靠 computed style，不看官方类名：absolute/fixed 定位 + 有底色/描边/阴影
-     * + 尺寸像一张卡 + 圆角。官方自己带进场动画的直接跳过，不跟它抢。
-     * 插入时没显形（透明度过渡 / display 切换 / 祖先切 class）的，200ms 兜底扫描补上；
-     * 每次显形只播一次，等它隐藏后标记复位，下次再弹还有动画。
+    /* ── 侧边栏悬停卡弹出动效 ─────────────────────────────────────
+     * 只认工作区 / 会话行的悬停卡：它内部有宿主自己的 CSS-module 局部名
+     * `*_hoverContent`（[class*="hoverContent"]），往上最近的定位祖先就是那张卡。
+     * 其它浮层（下拉、菜单、模型选择器）一律不动 —— 它们大多自带透明度 / 背景模糊
+     * 过渡，再叠一层动画就会闪。
+     * 每次显形只播一次；隐藏后标记复位，下次再悬停还有动画。
      * 关掉：localStorage['dsh-better-hud:motion'] = 'off'，刷新即可。
      */
     const POP_CLASS = 'uwh-pop'
-    const POP_SKIP_TAGS = new Set(['SPAN', 'B', 'I', 'EM', 'STRONG', 'CODE', 'A', 'SVG', 'PATH', 'BR', 'IMG', 'HR'])
+    const HOVER_CARD_CONTENT = '[class*="hoverContent"]'
+    const HOVER_ROW = '[class*="sessionRow"], [class*="projectRow"]'
 
-    function installPopovers() {
+    function installHoverCardPop() {
       if (!document.body) return () => {}
       let killed = false
       try { killed = Boolean(window.localStorage) && window.localStorage.getItem(MOTION_OFF_KEY) === 'off' } catch (err) { killed = false }
@@ -875,150 +877,111 @@ window.__ModuleLoader__.load({
 
       const animated = new WeakMap()
       const watch = []
-      const recent = []
-      const pending = []
       let frame = 0
       let stopped = false
-      let budget = 0
+      let lastTrigger = 0
 
-      // getComputedStyle 是这里唯一有点贵的东西：每次扫描给个预算。
-      const styleOf = (el) => {
-        if (budget <= 0) return null
-        budget -= 1
-        try { return getComputedStyle(el) } catch (err) { return null }
-      }
-
-      const isFloating = (el) => {
-        if (!el || el.nodeType !== 1 || !el.isConnected) return false
-        try { if (el.closest('[data-uwh]')) return false } catch (err) { /* 继续 */ }
-        const cs = styleOf(el)
-        if (!cs) return false
-        if (cs.position !== 'fixed' && cs.position !== 'absolute') return false
-        if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.02) return false
-        // 官方自己已经有进场动画的，不插手。
-        if (cs.animationName && cs.animationName !== 'none') return false
-        const rect = el.getBoundingClientRect()
-        if (rect.width < 120 || rect.height < 40) return false
-        if (rect.width > window.innerWidth - 32) return false
-        if (rect.bottom <= 0 || rect.top >= window.innerHeight) return false
-        const bg = cs.backgroundColor
-        const hasBg = Boolean(bg) && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent'
-        const hasBorder = (parseFloat(cs.borderTopWidth) || 0) > 0 && cs.borderTopStyle !== 'none'
-        const hasShadow = Boolean(cs.boxShadow) && cs.boxShadow !== 'none'
-        if (!hasBg && !hasBorder && !hasShadow) return false
-        const radius = parseFloat(cs.borderTopLeftRadius) || 0
-        return radius >= 4 || hasShadow
-      }
-
-      const play = (el) => {
-        if (stopped || !el || !el.classList || !el.isConnected) return
-        if (el.classList.contains(POP_CLASS) || animated.has(el)) return
-        const now = Date.now()
-        if (now - (animated.get(el) || 0) < 800) return
-        animated.set(el, now)
-        watch.push(el)
-        el.classList.add(POP_CLASS)
-      }
-
-      // portal 容器下面才是那张卡：命中最先找到的那个就不再往下钻。
-      const collect = (root, out) => {
-        if (out.length >= 6) return
-        if (isFloating(root)) { out.push(root); return }
-        const stack = [{ el: root, depth: 0 }]
-        let visited = 0
-        while (stack.length > 0 && out.length < 6) {
-          const current = stack.shift()
-          const children = current.el.children || []
-          for (let i = 0; i < children.length && out.length < 6; i += 1) {
-            const child = children[i]
-            visited += 1
-            if (visited > 200) return
-            if (POP_SKIP_TAGS.has(String(child.tagName || '').toUpperCase())) continue
-            if (isFloating(child)) { out.push(child); continue }
-            if (current.depth < 3) stack.push({ el: child, depth: current.depth + 1 })
-          }
+      // 从 hoverContent 往上找那张卡：优先定位祖先，其次 role=tooltip。
+      const cardOf = (content) => {
+        let el = content
+        for (let depth = 0; depth < 5 && el; depth += 1) {
+          let cs = null
+          try { cs = getComputedStyle(el) } catch (err) { cs = null }
+          if (!cs) return null
+          if (cs.position === 'fixed' || cs.position === 'absolute') return el
+          if (el.getAttribute && el.getAttribute('role') === 'tooltip') return el
+          el = el.parentElement
         }
+        return null
       }
 
-      const flush = () => {
+      const play = (card) => {
+        if (stopped || !card || !card.classList || !card.isConnected) return
+        if (card.classList.contains(POP_CLASS)) return
+        const now = Date.now()
+        if (now - (animated.get(card) || 0) < 600) return
+        let cs = null
+        try { cs = getComputedStyle(card) } catch (err) { cs = null }
+        if (!cs) return
+        if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.02) return
+        if (card.getClientRects().length === 0) return
+        // 宿主自己已经在动这张卡的话不插手。
+        if (cs.animationName && cs.animationName !== 'none') return
+        animated.set(card, now)
+        watch.push(card)
+        card.classList.add(POP_CLASS)
+      }
+
+      const scan = () => {
         frame = 0
         if (stopped) return
-        budget = 90
-        const roots = pending.splice(0, pending.length).slice(0, 30)
-        const found = []
-        for (const el of roots) {
-          if (!el.isConnected) continue
-          collect(el, found)
-          if (found.length >= 6) break
+        const seen = new Set()
+        let contents = []
+        try { contents = document.querySelectorAll(HOVER_CARD_CONTENT) } catch (err) { contents = [] }
+        for (const content of contents) {
+          const card = cardOf(content)
+          if (!card || seen.has(card)) continue
+          seen.add(card)
+          play(card)
         }
-        for (const el of found) play(el)
       }
 
-      const remember = (el) => {
-        if (stopped || !el || el.nodeType !== 1 || !el.isConnected) return
-        if (pending.indexOf(el) === -1 && pending.length < 40) pending.push(el)
-        for (let i = recent.length - 1; i >= 0; i -= 1) if (recent[i].el === el) return
-        recent.push({ el, at: Date.now() })
-        if (recent.length > 40) recent.shift()
-        if (!frame) frame = window.requestAnimationFrame(flush)
+      const schedule = () => {
+        if (stopped || frame) return
+        frame = window.requestAnimationFrame(scan)
       }
 
-      // 兜底扫描：给「插入时还没显形」的浮层补一刀；同时盯着已播过的浮层何时隐藏。
-      const sweep = () => {
-        if (stopped) return
+      // 悬停后卡片可能过一小会儿才出来：鼠标进到侧边栏行上时排几次扫描。
+      const onPointer = (event) => {
+        const target = event.target
+        if (!(target instanceof Element)) return
+        if (target.closest(HOVER_ROW) === null) return
         const now = Date.now()
-        for (let i = watch.length - 1; i >= 0; i -= 1) {
-          const el = watch[i]
-          if (!el.isConnected) { watch.splice(i, 1); continue }
-          const cs = styleOf(el)
-          if (!cs) continue
-          const hidden = cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.02 || el.getClientRects().length === 0
-          if (hidden) { animated.delete(el); watch.splice(i, 1) }
-        }
-        for (let i = recent.length - 1; i >= 0; i -= 1) {
-          if (!recent[i].el.isConnected || now - recent[i].at > 1600) recent.splice(i, 1)
-        }
-        if (recent.length === 0) return
-        budget = 120
-        const found = []
-        for (const item of recent) {
-          if (found.length >= 6) break
-          collect(item.el, found)
-        }
-        for (const el of found) play(el)
+        if (now - lastTrigger < 200) return
+        lastTrigger = now
+        schedule()
+        window.setTimeout(schedule, 80)
+        window.setTimeout(schedule, 220)
+        window.setTimeout(schedule, 420)
       }
+      document.addEventListener('pointerover', onPointer, true)
 
+      // 卡片是插进 DOM 的话，这一次就够快。
       let observer = null
       try {
         observer = new MutationObserver((records) => {
           if (stopped) return
           for (const record of records) {
-            if (record.type === 'childList') {
-              record.addedNodes.forEach((node) => remember(node))
-              continue
+            if (record.type !== 'childList') continue
+            for (const node of record.addedNodes) {
+              if (!(node instanceof HTMLElement)) continue
+              if (node.matches(HOVER_CARD_CONTENT) || node.querySelector(HOVER_CARD_CONTENT) !== null) {
+                schedule()
+                return
+              }
             }
-            // 属性变化很密（流式渲染会一直改 class），只跟「带子节点」的容器。
-            const target = record.target
-            if (!target || target.nodeType !== 1 || !target.isConnected) continue
-            if (!target.children || target.children.length === 0) continue
-            if (POP_SKIP_TAGS.has(String(target.tagName || '').toUpperCase())) continue
-            remember(target)
           }
         })
-        observer.observe(document.body, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ['class', 'style', 'hidden', 'data-state', 'aria-hidden', 'open'],
-        })
+        observer.observe(document.body, { childList: true, subtree: true })
       } catch (err) { observer = null }
 
-      const sweepTimer = setInterval(sweep, 200)
+      // 已播过的卡片：等它隐藏后把标记复位，下次再悬停还能播。
+      const sweepTimer = setInterval(() => {
+        if (stopped) return
+        for (let i = watch.length - 1; i >= 0; i -= 1) {
+          const card = watch[i]
+          if (!card.isConnected) { watch.splice(i, 1); continue }
+          let cs = null
+          try { cs = getComputedStyle(card) } catch (err) { cs = null }
+          if (!cs) continue
+          const hidden = cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.02 || card.getClientRects().length === 0
+          if (hidden) { animated.delete(card); watch.splice(i, 1) }
+        }
+      }, 200)
 
       const onAnimationEnd = (event) => {
         const el = event.target
-        if (!el || !el.classList) return
-        if (el.classList.contains(POP_CLASS)) el.classList.remove(POP_CLASS)
+        if (el && el.classList && el.classList.contains(POP_CLASS)) el.classList.remove(POP_CLASS)
       }
       document.addEventListener('animationend', onAnimationEnd, true)
       document.addEventListener('animationcancel', onAnimationEnd, true)
@@ -1028,6 +991,7 @@ window.__ModuleLoader__.load({
         if (observer) observer.disconnect()
         clearInterval(sweepTimer)
         if (frame) window.cancelAnimationFrame(frame)
+        document.removeEventListener('pointerover', onPointer, true)
         document.removeEventListener('animationend', onAnimationEnd, true)
         document.removeEventListener('animationcancel', onAnimationEnd, true)
         for (const el of document.querySelectorAll('.' + POP_CLASS)) el.classList.remove(POP_CLASS)
@@ -1081,10 +1045,10 @@ window.__ModuleLoader__.load({
           console.error('[' + NAME + '] failed to install chat motion', err)
         }
         try {
-          disposers.push(installPopovers())
-          console.log('[' + NAME + '] popover motion installed')
+          disposers.push(installHoverCardPop())
+          console.log('[' + NAME + '] hover-card motion installed')
         } catch (err) {
-          console.error('[' + NAME + '] failed to install popover motion', err)
+          console.error('[' + NAME + '] failed to install hover-card motion', err)
         }
         const slots = resolveSlots(ctx)
         if (!slots) {
