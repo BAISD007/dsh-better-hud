@@ -46,6 +46,26 @@ window.__ModuleLoader__.load({
 .uwh-switch.is-disabled { cursor: not-allowed; opacity: .6; }
 .uwh-switch-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s ease; }
 .uwh-switch.is-on .uwh-switch-knob { transform: translateX(16px); }
+
+/* 对话进场动效（移植自 dsh-client-ui-custom 的 motion，MIT）
+   只跑在宿主自己的锚点上：消息行 / 对话列 / 输入区座位。 */
+@keyframes uwh-motion-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes uwh-motion-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes uwh-motion-panel-in { from { opacity: .4; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes uwh-motion-zoom-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+.uwh-motion-fade-up {
+  animation: uwh-motion-rise 280ms cubic-bezier(.33, 1, .68, 1) both;
+  animation-delay: var(--uwh-motion-delay, 0ms);
+}
+.uwh-motion-panel { animation: uwh-motion-panel-in 300ms cubic-bezier(.33, 1, .68, 1) both; }
+.uwh-motion-zoom { animation: uwh-motion-zoom-in 400ms cubic-bezier(.33, 1, .68, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .uwh-motion-fade-up, .uwh-motion-panel, .uwh-motion-zoom {
+    animation-name: uwh-motion-fade-in;
+    animation-duration: 100ms;
+    animation-delay: 0ms;
+  }
+}
 `
 
     /* ── 小工具 ─────────────────────────────────────────────────── */
@@ -626,6 +646,212 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /* ── 对话进场动效 ─────────────────────────────────────────────
+     * 思路与实现移植自 dsh-client-ui-custom（MIT）的 motion 模块，只保留不需要
+     * 宿主新 API 的部分：它靠宿主自己的锚点工作，不猜 class、不改官方结构。
+     *   [data-chat-anchor-key]  每条消息行
+     *   [data-chat-flow]        对话列
+     *   [data-composer-seat]    输入区座位（新建对话的欢迎页）
+     * 整段加载（切会话 / 首次打开）逐行错峰 40ms（上限 320ms）；流式新增立即出现。
+     * 换会话时对话列整体轻微上浮一次。
+     * 关掉：localStorage['dsh-better-hud:motion'] = 'off'，刷新即可。
+     */
+    const MOTION_OFF_KEY = 'dsh-better-hud:motion'
+    const MOTION_ROW = '[data-chat-anchor-key]'
+    const MOTION_FLOW = '[data-chat-flow]'
+    const MOTION_SEAT = '[data-composer-seat]'
+    const MOTION_ROW_MARK = 'uwh-motion-row'
+    const MOTION_ROW_CLASS = 'uwh-motion-fade-up'
+    const MOTION_PANEL_CLASS = 'uwh-motion-panel'
+    const MOTION_SEAT_CLASS = 'uwh-motion-zoom'
+    const MOTION_STAGGER_STEP_MS = 40
+    const MOTION_STAGGER_CAP_MS = 320
+    const MOTION_RETRY_MS = 80
+    const MOTION_MAX_RETRIES = 12
+
+    function installChatMotion() {
+      if (!document.body) return () => {}
+      try {
+        if (window.localStorage && window.localStorage.getItem(MOTION_OFF_KEY) === 'off') return () => {}
+      } catch (err) { /* 读不到就按开启处理 */ }
+
+      const marked = new Set()
+      const lastCount = new Map()
+      let disposed = false
+      let switchTimer = 0
+      let switchAttempts = 0
+      let seatTimer = 0
+
+      const clearMarked = () => {
+        for (const row of marked) {
+          row.classList.remove(MOTION_ROW_MARK, MOTION_ROW_CLASS)
+          row.style.removeProperty('--uwh-motion-delay')
+        }
+        marked.clear()
+      }
+
+      const isRow = (node) => node instanceof HTMLElement && node.matches(MOTION_ROW)
+      const isTopRow = (row) => row.parentElement === null || row.parentElement.closest(MOTION_ROW) === null
+      // 隐藏行 / 高度为 0 的占位行不参与动画，也别占用错峰序号。
+      const visibleRow = (row) => row.getClientRects().length > 0 && row.offsetHeight > 0
+
+      // 给一批行加入场动画：整段加载才错峰，逐条新增不排队。
+      const applyBatch = (rows, load) => {
+        const ordered = [...rows].sort((a, b) => (
+          a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+        ))
+        ordered.forEach((row, index) => {
+          const delay = load ? Math.min(index * MOTION_STAGGER_STEP_MS, MOTION_STAGGER_CAP_MS) : 0
+          row.style.setProperty('--uwh-motion-delay', delay + 'ms')
+          // 宿主可能复用同一个行元素（切会话）：先摘掉再强制回流，动画才会重播。
+          if (row.classList.contains(MOTION_ROW_MARK)) {
+            row.classList.remove(MOTION_ROW_MARK, MOTION_ROW_CLASS)
+            void row.offsetWidth
+          }
+          row.classList.add(MOTION_ROW_MARK, MOTION_ROW_CLASS)
+          marked.add(row)
+        })
+      }
+
+      const classEntrance = (el, cls) => {
+        el.classList.remove(cls)
+        void el.offsetWidth
+        el.classList.add(cls)
+      }
+
+      const playPanel = () => {
+        const flow = document.querySelector(MOTION_FLOW)
+        if (flow) classEntrance(flow, MOTION_PANEL_CLASS)
+      }
+
+      // 新建对话的欢迎页只在「大块内容出现」时进场；打字改动输入区不算。
+      let seatPlayedAt = 0
+      const playSeat = () => {
+        // 只有空对话（新建对话）才让欢迎页进场，普通会话不动输入区。
+        if (document.querySelectorAll(MOTION_ROW).length > 0) return
+        const now = Date.now()
+        if (now - seatPlayedAt < 1500) return
+        const seat = document.querySelector(MOTION_SEAT)
+        if (!seat) return
+        seatPlayedAt = now
+        classEntrance(seat, MOTION_SEAT_CLASS)
+      }
+
+      // 换会话兜底：等宿主 commit 完新行再扫一遍，拿不到就重试几次。
+      const replayRows = () => {
+        if (disposed) return
+        const rows = [...document.querySelectorAll(MOTION_ROW)].filter(isTopRow).filter(visibleRow)
+        const flow = document.querySelector(MOTION_FLOW)
+        if (rows.length === 0 && flow === null && switchAttempts < MOTION_MAX_RETRIES) {
+          switchAttempts += 1
+          switchTimer = window.setTimeout(replayRows, MOTION_RETRY_MS)
+          return
+        }
+        if (rows.length > 0) applyBatch(rows, true)
+        if (flow) classEntrance(flow, MOTION_PANEL_CLASS)
+      }
+
+      const seatObserver = new MutationObserver((records) => {
+        if (disposed || seatTimer) return
+        let big = false
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node instanceof HTMLElement && node.offsetHeight > 80) { big = true; break }
+          }
+          if (big) break
+        }
+        if (!big) return
+        seatTimer = window.setTimeout(() => {
+          seatTimer = 0
+          playSeat()
+        }, 60)
+      })
+
+      const observeSeat = () => {
+        for (const seat of document.querySelectorAll(MOTION_SEAT)) {
+          try { seatObserver.observe(seat, { childList: true, subtree: true }) } catch (err) { /* ignore */ }
+        }
+      }
+
+      const observer = new MutationObserver((mutations) => {
+        if (disposed) return
+        const byParent = new Map()
+        const removedParents = new Set()
+        let flowTouched = false
+        let seatTouched = false
+
+        for (const mutation of mutations) {
+          if (mutation.type !== 'childList') continue
+          for (const node of mutation.addedNodes) {
+            if (!(node instanceof HTMLElement)) continue
+            if (node.matches(MOTION_SEAT) || node.querySelector(MOTION_SEAT) !== null) {
+              seatTouched = true
+              observeSeat()
+            }
+            if (node.matches(MOTION_FLOW) || node.querySelector(MOTION_FLOW) !== null) flowTouched = true
+            const rows = []
+            if (isRow(node)) rows.push(node)
+            else rows.push(...node.querySelectorAll(MOTION_ROW))
+            for (const row of rows) {
+              if (!isTopRow(row) || !visibleRow(row)) continue
+              const parent = row.parentElement
+              if (parent === null) continue
+              const list = byParent.get(parent) || []
+              list.push(row)
+              byParent.set(parent, list)
+            }
+          }
+          for (const node of mutation.removedNodes) {
+            if (!(node instanceof HTMLElement)) continue
+            if (node.matches(MOTION_ROW) || node.querySelector(MOTION_ROW) !== null) {
+              const parent = node.matches(MOTION_ROW) ? mutation.target : node
+              if (parent instanceof Element) removedParents.add(parent)
+            }
+          }
+        }
+
+        // 行分批：同一父容器里「之前是空的」或「这一批伴随移除」= 整段加载。
+        const batches = []
+        for (const [parent, rows] of byParent) {
+          const wasEmpty = (lastCount.get(parent) || 0) === 0
+          batches.push({ parent, rows, load: removedParents.has(parent) || wasEmpty })
+        }
+        for (const parent of byParent.keys()) {
+          lastCount.set(parent, parent.querySelectorAll(MOTION_ROW).length)
+        }
+        for (const batch of batches) applyBatch(batch.rows, batch.load)
+
+        // 整段换掉（切会话）：对话列整体重进一次。
+        let switched = false
+        for (const parent of removedParents) {
+          if (parent.querySelectorAll(MOTION_ROW).length === 0) switched = true
+        }
+        if (flowTouched || switched) {
+          window.clearTimeout(switchTimer)
+          switchAttempts = 0
+          // 这一批已经把新行按错峰播过了，就只补对话列的进场，别再让行重播一遍。
+          if (byParent.size > 0) playPanel()
+          else switchTimer = window.setTimeout(replayRows, 60)
+        }
+        if (seatTouched) playSeat()
+      })
+
+      observer.observe(document.body, { childList: true, subtree: true })
+      observeSeat()
+
+      return () => {
+        disposed = true
+        observer.disconnect()
+        seatObserver.disconnect()
+        window.clearTimeout(switchTimer)
+        window.clearTimeout(seatTimer)
+        clearMarked()
+        for (const el of document.querySelectorAll('.' + MOTION_PANEL_CLASS + ', .' + MOTION_SEAT_CLASS)) {
+          el.classList.remove(MOTION_PANEL_CLASS, MOTION_SEAT_CLASS)
+        }
+      }
+    }
+
     /* ── 插件 ───────────────────────────────────────────────────── */
     function insertStyles() {
       try {
@@ -666,6 +892,12 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         const disposers = []
         disposers.push(insertStyles())
+        try {
+          disposers.push(installChatMotion())
+          console.log('[' + NAME + '] chat motion installed')
+        } catch (err) {
+          console.error('[' + NAME + '] failed to install chat motion', err)
+        }
         const slots = resolveSlots(ctx)
         if (!slots) {
           console.warn('[' + NAME + '] slots service not found; UI will not render')
