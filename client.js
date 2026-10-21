@@ -47,20 +47,18 @@ window.__ModuleLoader__.load({
 .uwh-switch-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s ease; }
 .uwh-switch.is-on .uwh-switch-knob { transform: translateX(16px); }
 
-/* 对话进场动效（移植自 dsh-client-ui-custom 的 motion，MIT）
-   只跑在宿主自己的锚点上：消息行 / 对话列 / 输入区座位。 */
+/* 会话切换动效（移植自 dsh-client-ui-custom 的 motion，MIT）
+   只跑在宿主自己的锚点上：消息行 / 对话列；只在整段加载时播。 */
 @keyframes uwh-motion-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes uwh-motion-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes uwh-motion-panel-in { from { opacity: .4; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@keyframes uwh-motion-zoom-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
 .uwh-motion-fade-up {
   animation: uwh-motion-rise 280ms cubic-bezier(.33, 1, .68, 1) both;
   animation-delay: var(--uwh-motion-delay, 0ms);
 }
 .uwh-motion-panel { animation: uwh-motion-panel-in 300ms cubic-bezier(.33, 1, .68, 1) both; }
-.uwh-motion-zoom { animation: uwh-motion-zoom-in 400ms cubic-bezier(.33, 1, .68, 1) both; }
 @media (prefers-reduced-motion: reduce) {
-  .uwh-motion-fade-up, .uwh-motion-panel, .uwh-motion-zoom {
+  .uwh-motion-fade-up, .uwh-motion-panel {
     animation-name: uwh-motion-fade-in;
     animation-duration: 100ms;
     animation-delay: 0ms;
@@ -646,24 +644,22 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /* ── 对话进场动效 ─────────────────────────────────────────────
-     * 思路与实现移植自 dsh-client-ui-custom（MIT）的 motion 模块，只保留不需要
-     * 宿主新 API 的部分：它靠宿主自己的锚点工作，不猜 class、不改官方结构。
+    /* ── 会话切换动效（只保留这一处）────────────────────────────────
+     * 思路与实现移植自 dsh-client-ui-custom（MIT）的 motion 模块：靠宿主自己的
+     * 锚点工作，不猜 class、不改官方结构。
      *   [data-chat-anchor-key]  每条消息行
      *   [data-chat-flow]        对话列
-     *   [data-composer-seat]    输入区座位（新建对话的欢迎页）
-     * 整段加载（切会话 / 首次打开）逐行错峰 40ms（上限 320ms）；流式新增立即出现。
-     * 换会话时对话列整体轻微上浮一次。
+     * 只在「整段加载」时播（切会话 / 首次打开 / 恢复上次会话）：
+     * 对话列轻微上浮一次，消息行逐行错峰 40ms（上限 320ms）。
+     * 流式新增的消息、思考卡、工具卡、输入区一律不动，保持默认。
      * 关掉：localStorage['dsh-better-hud:motion'] = 'off'，刷新即可。
      */
     const MOTION_OFF_KEY = 'dsh-better-hud:motion'
     const MOTION_ROW = '[data-chat-anchor-key]'
     const MOTION_FLOW = '[data-chat-flow]'
-    const MOTION_SEAT = '[data-composer-seat]'
     const MOTION_ROW_MARK = 'uwh-motion-row'
     const MOTION_ROW_CLASS = 'uwh-motion-fade-up'
     const MOTION_PANEL_CLASS = 'uwh-motion-panel'
-    const MOTION_SEAT_CLASS = 'uwh-motion-zoom'
     const MOTION_STAGGER_STEP_MS = 40
     const MOTION_STAGGER_CAP_MS = 320
     const MOTION_RETRY_MS = 80
@@ -680,7 +676,6 @@ window.__ModuleLoader__.load({
       let disposed = false
       let switchTimer = 0
       let switchAttempts = 0
-      let seatTimer = 0
 
       const clearMarked = () => {
         for (const row of marked) {
@@ -695,13 +690,15 @@ window.__ModuleLoader__.load({
       // 隐藏行 / 高度为 0 的占位行不参与动画，也别占用错峰序号。
       const visibleRow = (row) => row.getClientRects().length > 0 && row.offsetHeight > 0
 
-      // 给一批行加入场动画：整段加载才错峰，逐条新增不排队。
-      const applyBatch = (rows, load) => {
+      // 只给整段加载的行加入场：逐条新增（流式）完全不动。
+      const applyBatch = (rows) => {
+        // 切过的会话把旧行丢进 marked 了，顺手清掉，别一直攒着。
+        for (const row of marked) if (!row.isConnected) marked.delete(row)
         const ordered = [...rows].sort((a, b) => (
           a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
         ))
         ordered.forEach((row, index) => {
-          const delay = load ? Math.min(index * MOTION_STAGGER_STEP_MS, MOTION_STAGGER_CAP_MS) : 0
+          const delay = Math.min(index * MOTION_STAGGER_STEP_MS, MOTION_STAGGER_CAP_MS)
           row.style.setProperty('--uwh-motion-delay', delay + 'ms')
           // 宿主可能复用同一个行元素（切会话）：先摘掉再强制回流，动画才会重播。
           if (row.classList.contains(MOTION_ROW_MARK)) {
@@ -724,19 +721,6 @@ window.__ModuleLoader__.load({
         if (flow) classEntrance(flow, MOTION_PANEL_CLASS)
       }
 
-      // 新建对话的欢迎页只在「大块内容出现」时进场；打字改动输入区不算。
-      let seatPlayedAt = 0
-      const playSeat = () => {
-        // 只有空对话（新建对话）才让欢迎页进场，普通会话不动输入区。
-        if (document.querySelectorAll(MOTION_ROW).length > 0) return
-        const now = Date.now()
-        if (now - seatPlayedAt < 1500) return
-        const seat = document.querySelector(MOTION_SEAT)
-        if (!seat) return
-        seatPlayedAt = now
-        classEntrance(seat, MOTION_SEAT_CLASS)
-      }
-
       // 换会话兜底：等宿主 commit 完新行再扫一遍，拿不到就重试几次。
       const replayRows = () => {
         if (disposed) return
@@ -747,30 +731,8 @@ window.__ModuleLoader__.load({
           switchTimer = window.setTimeout(replayRows, MOTION_RETRY_MS)
           return
         }
-        if (rows.length > 0) applyBatch(rows, true)
+        if (rows.length > 0) applyBatch(rows)
         if (flow) classEntrance(flow, MOTION_PANEL_CLASS)
-      }
-
-      const seatObserver = new MutationObserver((records) => {
-        if (disposed || seatTimer) return
-        let big = false
-        for (const record of records) {
-          for (const node of record.addedNodes) {
-            if (node instanceof HTMLElement && node.offsetHeight > 80) { big = true; break }
-          }
-          if (big) break
-        }
-        if (!big) return
-        seatTimer = window.setTimeout(() => {
-          seatTimer = 0
-          playSeat()
-        }, 60)
-      })
-
-      const observeSeat = () => {
-        for (const seat of document.querySelectorAll(MOTION_SEAT)) {
-          try { seatObserver.observe(seat, { childList: true, subtree: true }) } catch (err) { /* ignore */ }
-        }
       }
 
       const observer = new MutationObserver((mutations) => {
@@ -778,16 +740,11 @@ window.__ModuleLoader__.load({
         const byParent = new Map()
         const removedParents = new Set()
         let flowTouched = false
-        let seatTouched = false
 
         for (const mutation of mutations) {
           if (mutation.type !== 'childList') continue
           for (const node of mutation.addedNodes) {
             if (!(node instanceof HTMLElement)) continue
-            if (node.matches(MOTION_SEAT) || node.querySelector(MOTION_SEAT) !== null) {
-              seatTouched = true
-              observeSeat()
-            }
             if (node.matches(MOTION_FLOW) || node.querySelector(MOTION_FLOW) !== null) flowTouched = true
             const rows = []
             if (isRow(node)) rows.push(node)
@@ -819,7 +776,10 @@ window.__ModuleLoader__.load({
         for (const parent of byParent.keys()) {
           lastCount.set(parent, parent.querySelectorAll(MOTION_ROW).length)
         }
-        for (const batch of batches) applyBatch(batch.rows, batch.load)
+        // 只有整段加载才播；流式新增直接跳过。
+        for (const batch of batches) {
+          if (batch.load) applyBatch(batch.rows)
+        }
 
         // 整段换掉（切会话）：对话列整体重进一次。
         let switched = false
@@ -833,21 +793,17 @@ window.__ModuleLoader__.load({
           if (byParent.size > 0) playPanel()
           else switchTimer = window.setTimeout(replayRows, 60)
         }
-        if (seatTouched) playSeat()
       })
 
       observer.observe(document.body, { childList: true, subtree: true })
-      observeSeat()
 
       return () => {
         disposed = true
         observer.disconnect()
-        seatObserver.disconnect()
         window.clearTimeout(switchTimer)
-        window.clearTimeout(seatTimer)
         clearMarked()
-        for (const el of document.querySelectorAll('.' + MOTION_PANEL_CLASS + ', .' + MOTION_SEAT_CLASS)) {
-          el.classList.remove(MOTION_PANEL_CLASS, MOTION_SEAT_CLASS)
+        for (const el of document.querySelectorAll('.' + MOTION_PANEL_CLASS)) {
+          el.classList.remove(MOTION_PANEL_CLASS)
         }
       }
     }
