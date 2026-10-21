@@ -245,7 +245,7 @@ window.__ModuleLoader__.load({
     }
 
     /** 设置共享：顶栏、每轮消耗、设置页读同一份，保存后即时生效。 */
-    const DEFAULT_SETTINGS_STATE = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true }
+    const DEFAULT_SETTINGS_STATE = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true }
     let hudSettings = null
     const hudSettingsListeners = new Set()
 
@@ -507,7 +507,7 @@ window.__ModuleLoader__.load({
     }
 
     /* ── 设置页 ─────────────────────────────────────────────────── */
-    const HUD_SETTINGS_FALLBACK = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true }
+    const HUD_SETTINGS_FALLBACK = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true }
     const HUD_ITEMS = [
       { id: 'balance', title: '余额', desc: 'DeepSeek 账户实时余额' },
       { id: 'today', title: '今日已用', desc: '按余额观测累计的今日消费' },
@@ -630,6 +630,19 @@ window.__ModuleLoader__.load({
         h('div', { className: 'uwh-set-card' },
           h('div', { className: 'uwh-set-row' },
             h('div', { className: 'uwh-set-main' },
+              h('div', { className: 'uwh-set-title' }, '会话切换动效'),
+              h('div', { className: 'uwh-set-desc' }, '切换会话时，对话整体淡入、消息逐行错开出现'),
+            ),
+            h(Toggle, {
+              on: settings.switchMotion !== false,
+              label: '会话切换动效',
+              onChange: (on) => commit({ ...settings, switchMotion: on }),
+            }),
+          ),
+        ),
+        h('div', { className: 'uwh-set-card' },
+          h('div', { className: 'uwh-set-row' },
+            h('div', { className: 'uwh-set-main' },
               h('div', { className: 'uwh-set-title' }, '当调用非 DeepSeek 官方模型时，不显示余额'),
             ),
             h(Toggle, {
@@ -690,6 +703,26 @@ window.__ModuleLoader__.load({
       // 隐藏行 / 高度为 0 的占位行不参与动画，也别占用错峰序号。
       const visibleRow = (row) => row.getClientRects().length > 0 && row.offsetHeight > 0
 
+      // 设置页的开关：关掉就不再播，并立刻清掉已经挂上去的类和变量。
+      let offCleaned = false
+      const motionOn = () => !(hudSettings && hudSettings.switchMotion === false)
+      const resetVisuals = () => {
+        clearMarked()
+        for (const el of document.querySelectorAll('.' + MOTION_PANEL_CLASS)) el.classList.remove(MOTION_PANEL_CLASS)
+      }
+      const onSettings = (next) => {
+        if (!next || next.switchMotion !== false) return
+        resetVisuals()
+        offCleaned = true
+      }
+      hudSettingsListeners.add(onSettings)
+      // 首屏先把设置取回来，免得「已经关掉了还先播一次」。
+      if (!hudSettings) {
+        getJson('/settings')
+          .then((value) => { if (value && value.settings) applyHudSettings(value.settings) })
+          .catch(() => { /* 老宿主没有设置路由时按默认开启 */ })
+      }
+
       // 只给整段加载的行加入场：逐条新增（流式）完全不动。
       const applyBatch = (rows) => {
         // 切过的会话把旧行丢进 marked 了，顺手清掉，别一直攒着。
@@ -723,7 +756,7 @@ window.__ModuleLoader__.load({
 
       // 换会话兜底：等宿主 commit 完新行再扫一遍，拿不到就重试几次。
       const replayRows = () => {
-        if (disposed) return
+        if (disposed || !motionOn()) return
         const rows = [...document.querySelectorAll(MOTION_ROW)].filter(isTopRow).filter(visibleRow)
         const flow = document.querySelector(MOTION_FLOW)
         if (rows.length === 0 && flow === null && switchAttempts < MOTION_MAX_RETRIES) {
@@ -737,6 +770,11 @@ window.__ModuleLoader__.load({
 
       const observer = new MutationObserver((mutations) => {
         if (disposed) return
+        if (!motionOn()) {
+          if (!offCleaned) { resetVisuals(); offCleaned = true }
+          return
+        }
+        offCleaned = false
         const byParent = new Map()
         const removedParents = new Set()
         let flowTouched = false
@@ -801,6 +839,7 @@ window.__ModuleLoader__.load({
         disposed = true
         observer.disconnect()
         window.clearTimeout(switchTimer)
+        hudSettingsListeners.delete(onSettings)
         clearMarked()
         for (const el of document.querySelectorAll('.' + MOTION_PANEL_CLASS)) {
           el.classList.remove(MOTION_PANEL_CLASS)

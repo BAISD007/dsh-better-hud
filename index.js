@@ -15,7 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
 const PLUGIN = 'dsh-better-hud'
 
 /** 账本位置：沿用 DSH_HOME（默认 ~/.dsh）。 */
@@ -28,7 +28,14 @@ const LEDGER_KEEP_DAYS = 120
 /* ── 顶栏显示设置（落盘）───────────────────────────────────────── */
 const SETTINGS_FILE = path.join(LEDGER_DIR, 'settings.json')
 const KNOWN_ITEMS = ['balance', 'today', 'peak']
-const DEFAULT_SETTINGS = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true }
+const DEFAULT_SETTINGS = {
+  version: 1,
+  enabled: true,
+  items: ['balance', 'today', 'peak'],
+  turnCost: true,
+  hideBalanceForNonOfficial: true,
+  switchMotion: true,
+}
 let settingsCache = null
 
 function sanitizeSettings(input, base) {
@@ -40,7 +47,10 @@ function sanitizeSettings(input, base) {
   const hideBalanceForNonOfficial = input && typeof input.hideBalanceForNonOfficial === 'boolean'
     ? input.hideBalanceForNonOfficial
     : fallback.hideBalanceForNonOfficial
-  return { version: 1, enabled, items, turnCost, hideBalanceForNonOfficial }
+  const switchMotion = input && typeof input.switchMotion === 'boolean'
+    ? input.switchMotion
+    : fallback.switchMotion !== false
+  return { version: 1, enabled, items, turnCost, hideBalanceForNonOfficial, switchMotion }
 }
 
 function loadSettings() {

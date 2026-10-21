@@ -7,7 +7,7 @@
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 [![GitHub stars](https://img.shields.io/github/stars/BAISD007/dsh-better-hud?style=flat)](https://github.com/BAISD007/dsh-better-hud)
 
-> 版本 0.1.1，已发布 npm（npm 页面自 0.1.1 起含界面截图）。设计取舍与阶段记录见 [ROUTE.md](./ROUTE.md)。
+> 版本 0.2.0（npm 上为 0.1.0，0.2.0 待发布；npm 页面自 0.1.1 起含界面截图）。设计取舍与阶段记录见 [ROUTE.md](./ROUTE.md)。
 
 ---
 
@@ -43,6 +43,12 @@
 - 金额 = 该条消息的真实 usage × DeepSeek 峰谷价目表；鼠标悬停可看到 token 合计与当时是峰价/谷价。
 - 官方自带的 `用量 x.xM tok`、时间**保持原样**，插件不重复渲染。
 
+### 会话切换动效
+
+- 切换会话（或首次打开）时，对话整体轻微上浮，消息逐行淡入错开出现；默认开启，可在设置里关掉。
+- 只作用于「整段加载」：流式新增的消息、思考卡、工具卡、输入区一律保持默认，不动。
+- 实现移用 [dsh-client-ui-custom](https://github.com/yoli-mi/dsh-client-ui-custom) 的 motion 思路（MIT），只依赖宿主自己的 `[data-chat-anchor-key]` / `[data-chat-flow]` 锚点，不猜 class、不改官方结构；系统「减少动态效果」时自动降级为纯淡入。
+
 ### 官方模型检测
 
 - 只有 `deepseek-official`（API Key 通道）和 `deepseek-account`（账号登录通道）判定为「官方」。
@@ -56,6 +62,7 @@
 - 在标题栏显示用量信息（总开关）
 - 显示内容：余额 / 今日已用 / 峰谷倒计时（任意增删）
 - 显示每轮消耗（动作行那条 ¥）
+- 会话切换动效（切换会话时对话整体淡入、消息逐行错开出现）
 - 当调用非 DeepSeek 官方模型时，不显示余额（默认开启）
 
 ---
