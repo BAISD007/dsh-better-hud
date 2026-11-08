@@ -15,7 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const VERSION = '0.2.0'
+const VERSION = '0.2.1'
 const PLUGIN = 'dsh-better-hud'
 
 /** 账本位置：沿用 DSH_HOME（默认 ~/.dsh）。 */

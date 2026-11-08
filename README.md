@@ -7,7 +7,7 @@
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 [![GitHub stars](https://img.shields.io/github/stars/BAISD007/dsh-better-hud?style=flat)](https://github.com/BAISD007/dsh-better-hud)
 
-> 版本 0.2.0（npm 上为 0.1.0，0.2.0 待发布；npm 页面自 0.1.1 起含界面截图）。设计取舍与阶段记录见 [ROUTE.md](./ROUTE.md)。
+> 版本 0.2.1 · npm：[dsh-better-hud](https://www.npmjs.com/package/dsh-better-hud) · 设计取舍与阶段记录见 [ROUTE.md](https://github.com/BAISD007/dsh-better-hud/blob/main/ROUTE.md)。
 
 ---
 
@@ -75,9 +75,17 @@
 
 ## 安装
 
-本包是标准 DSH bundle（`dsh.bundle.patch` + `dsh.client`），有两种安装方式。
+本包是标准 DSH bundle（`dsh.bundle.patch` + `dsh.client`），有三种安装方式。
 
-### 方式 A：从 npm 安装（发布之后）
+### 方式 0：在 DSH 里输入包名（最简单，推荐）
+
+打开 **插件 → 添加插件**，在输入框里填 `dsh-better-hud`，点 **安装**。
+
+- 安装源选「默认」或「npm 官方源」都能查到；「中国大陆镜像源」也可以，只是新版本同步要几分钟。
+- 装完插件管理器会自动写 profile 依赖和 `dsh.profile.bundles`，不用手工改配置。
+- 首次安装后重启一次客户端生效（见下方「生效方式」）。
+
+### 方式 A：命令行 / 会话内工具安装
 
 ```bash
 # 会话内插件管理器
