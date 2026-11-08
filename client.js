@@ -7,6 +7,8 @@ window.__ModuleLoader__.load({
     const NAME = 'dsh-better-hud'
     const API = '/api/dsh-better-hud'
     const STYLE_ID = NAME + '/styles'
+    /** 官方充值页（与账号平台 links.topUpUrl 一致：new URL('/top_up', 'https://platform.deepseek.com')）。 */
+    const RECHARGE_URL = 'https://platform.deepseek.com/top_up'
 
     /* ── 样式（注入一次，卸载时移除）───────────────────────────── */
     const CSS = `
@@ -46,6 +48,32 @@ window.__ModuleLoader__.load({
 .uwh-switch.is-disabled { cursor: not-allowed; opacity: .6; }
 .uwh-switch-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s ease; }
 .uwh-switch.is-on .uwh-switch-knob { transform: translateX(16px); }
+
+/* 余额低于预警线：只把「DeepSeek余额」这一段变红，其它两段保持原色。 */
+.uwh-item.is-low { color: var(--dsw-alias-state-error-primary, #e5484d); pointer-events: auto; text-decoration: none; }
+.uwh-item.is-low:hover { text-decoration: underline; }
+.uwh-item.is-low .uwh-value { color: inherit; }
+.uwh-item.is-low:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; border-radius: 4px; }
+a.uwh-item { text-decoration: none; }
+
+/* 设置页数字输入 */
+.uwh-set-num-row { display: flex; align-items: center; gap: 6px; flex: none; }
+.uwh-set-num { box-sizing: border-box; width: 96px; padding: 4px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; text-align: right; }
+.uwh-set-num:disabled { opacity: .55; cursor: not-allowed; }
+.uwh-set-unit { font-size: 13px; color: var(--dsw-alias-label-secondary); }
+
+/* 充值页：桌面端内嵌原生 Platform 视图（window.dshPlatform.open('top-up')），
+   这里只画 48px 返回栏和承载视图的容器，样式对齐官方账号页。 */
+.uwh-recharge { position: fixed; inset: 0; z-index: 1001; display: flex; flex-direction: column; background: var(--dsw-alias-bg-base); pointer-events: auto; }
+[data-windows-titlebar] .uwh-recharge { padding-top: var(--dsh-windows-titlebar-height); }
+.uwh-recharge-head { box-sizing: border-box; flex: none; height: 48px; padding: 6px 16px; border-bottom: .5px solid var(--dsw-alias-border-l1); -webkit-app-region: initial; }
+.uwh-recharge-back { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px; border: none; border-radius: var(--dsw-radius-sm, 6px); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 14px; line-height: 22px; white-space: nowrap; cursor: pointer; }
+.uwh-recharge-back:hover { color: var(--dsw-alias-label-primary); }
+.uwh-recharge-back:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.uwh-recharge-body { position: relative; flex: 1; min-height: 0; }
+.uwh-recharge-status { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: var(--dsw-alias-label-tertiary); font-size: 14px; line-height: 22px; text-align: center; }
+.uwh-recharge-btn { box-sizing: border-box; height: 32px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; cursor: pointer; }
+.uwh-recharge-btn:hover { border-color: var(--dsw-alias-brand-primary); }
 
 /* 会话切换动效（移植自 dsh-client-ui-custom 的 motion，MIT）
    只跑在宿主自己的锚点上：消息行 / 对话列；只在整段加载时播。 */
@@ -255,7 +283,7 @@ window.__ModuleLoader__.load({
     }
 
     /** 设置共享：顶栏、每轮消耗、设置页读同一份，保存后即时生效。 */
-    const DEFAULT_SETTINGS_STATE = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true, hoverMotion: true }
+    const DEFAULT_SETTINGS_STATE = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true, hoverMotion: true, warnBelow: 5 }
     let hudSettings = null
     const hudSettingsListeners = new Set()
 
@@ -267,6 +295,93 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 桌面端内嵌充值页：走 preload 暴露的 window.dshPlatform（open / setBounds / close），
+     * 与官方账号设置页「去充值」用同一条原生 Platform 视图通道。Web 部署没有这个桥，
+     * 调用方会退化成 window.open 新标签。
+     */
+    function rechargeBridge() {
+      try {
+        const bridge = window.dshPlatform
+        if (bridge && typeof bridge.open === 'function' && typeof bridge.setBounds === 'function' && typeof bridge.close === 'function') return bridge
+      } catch (err) { /* ignore */ }
+      return null
+    }
+
+    function portalToBody(node) {
+      try {
+        const reactDom = require('react-dom')
+        if (reactDom && typeof reactDom.createPortal === 'function') return reactDom.createPortal(node, document.body)
+      } catch (err) { /* fall back to inline rendering */ }
+      return node
+    }
+
+    function RechargeOverlay({ onClose }) {
+      const backRef = React.useRef(null)
+      const bodyRef = React.useRef(null)
+      const [attempt, setAttempt] = React.useState(0)
+      const [status, setStatus] = React.useState('loading')
+      const bridge = rechargeBridge()
+
+      React.useLayoutEffect(() => {
+        const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+        try { if (backRef.current) backRef.current.focus() } catch (err) { /* ignore */ }
+        return () => {
+          try { if (previous && previous.isConnected) previous.focus() } catch (err) { /* ignore */ }
+        }
+      }, [])
+
+      React.useEffect(() => {
+        if (!bridge || !bodyRef.current) return undefined
+        const element = bodyRef.current
+        let closed = false
+        const bounds = () => {
+          const rect = element.getBoundingClientRect()
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+        }
+        const fail = () => { if (!closed) setStatus('failed') }
+        setStatus('loading')
+        Promise.resolve(bridge.open('top-up', bounds())).then(() => { if (!closed) setStatus('loaded') }, fail)
+        let observer = null
+        try {
+          observer = new ResizeObserver(() => {
+            try { Promise.resolve(bridge.setBounds(bounds())).catch(fail) } catch (err) { fail() }
+          })
+          observer.observe(element)
+        } catch (err) { /* 没有 ResizeObserver 时窗口缩放不跟随，仍可用 */ }
+        return () => {
+          closed = true
+          try { if (observer) observer.disconnect() } catch (err) { /* ignore */ }
+          try { Promise.resolve(bridge.close()).catch(() => {}) } catch (err) { /* ignore */ }
+        }
+      }, [bridge, attempt])
+
+      const openExternally = () => {
+        try { window.open(RECHARGE_URL, '_blank', 'noopener,noreferrer') } catch (err) { /* ignore */ }
+        onClose()
+      }
+
+      const statusNode = status === 'loaded' ? null : h('div', { className: 'uwh-recharge-status' },
+        status === 'failed'
+          ? h(React.Fragment, null,
+              h('span', null, '充值页加载失败'),
+              h('button', { type: 'button', className: 'uwh-recharge-btn', onClick: () => setAttempt((value) => value + 1) }, '重试'),
+              h('button', { type: 'button', className: 'uwh-recharge-btn', onClick: openExternally }, '在浏览器打开'),
+            )
+          : h('span', null, '正在打开充值页…'),
+      )
+
+      return portalToBody(h('div', { className: 'uwh-recharge', role: 'dialog', 'aria-modal': 'true', 'aria-label': '充值' },
+        h('header', { className: 'uwh-recharge-head', 'data-window-drag': true },
+          h('button', { ref: backRef, type: 'button', className: 'uwh-recharge-back', onClick: onClose },
+            h('span', { 'aria-hidden': 'true' }, '‹'),
+            h('span', null, '返回 DeepSeek Harness'),
+          ),
+        ),
+        h('div', { ref: bodyRef, className: 'uwh-recharge-body' }, statusNode),
+      ))
+    }
+
     function TopBar() {
       const compact = useMedia('(max-width: 1023px)')
       const tiny = useMedia('(max-width: 479px)')
@@ -276,6 +391,7 @@ window.__ModuleLoader__.load({
       const [now, setNow] = React.useState(() => Date.now())
       const [sharedSettings, setSharedSettings] = React.useState(hudSettings)
       const [liveModel, setLiveModel] = React.useState(undefined)
+      const [rechargeOpen, setRechargeOpen] = React.useState(false)
       const rootRef = React.useRef(null)
 
       const load = React.useCallback(async (force) => {
@@ -390,26 +506,55 @@ window.__ModuleLoader__.load({
       const balanceText = wallet ? symbol + ' ' + fmtMoney(wallet.balance) : '—'
       const todayText = today ? symbol + ' ' + fmtMoney(today.amount) : '—'
 
+      // 余额预警：低于阈值时只把余额这一段变红，并可点击打开充值页。
+      const rawWarnBelow = Number(settings.warnBelow)
+      const warnBelow = Number.isFinite(rawWarnBelow) ? rawWarnBelow : 5
+      const lowBalance = Boolean(wallet) && warnBelow > 0
+        && Number(wallet.balance) < warnBelow
+      const rechargeHint = lowBalance
+        ? '余额低于 ' + symbol + ' ' + fmtMoney(warnBelow) + '，点击充值'
+        : null
+      const openRecharge = (event) => {
+        if (!lowBalance) return
+        if (!rechargeBridge()) return // 没有桌面桥：让 <a target="_blank"> 自己去开浏览器
+        try {
+          event.preventDefault()
+          event.stopPropagation()
+        } catch (err) { /* ignore */ }
+        setRechargeOpen(true)
+      }
+      const balanceClass = 'uwh-item' + (lowBalance ? ' is-low' : '')
+      const balanceAnchorProps = lowBalance
+        ? { href: RECHARGE_URL, target: '_blank', rel: 'noopener noreferrer', title: rechargeHint, onClick: openRecharge }
+        : null
+      const renderBalance = (key, ...inner) => (lowBalance
+        ? h('a', { key, className: balanceClass, ...balanceAnchorProps }, ...inner)
+        : h('span', { key, className: balanceClass }, ...inner))
+
       const children = []
       if (tiny) {
-        if (showBalance) children.push(h('span', { key: 'b', className: 'uwh-item' }, balanceText))
+        if (showBalance) children.push(renderBalance('b', balanceText))
         else if (showToday) children.push(h('span', { key: 't', className: 'uwh-item' }, todayText))
         if (showPeak && countdown) {
           children.push(h('span', { key: 'p', className: 'uwh-item ' + peakClass }, countdown.slice(0, 5)))
         }
       } else if (compact) {
         if (showBalance || showToday) {
-          const pair = showBalance && showToday
-            ? balanceText + '/' + fmtMoney(today ? today.amount : null)
-            : (showBalance ? balanceText : todayText)
-          children.push(h('span', { key: 'bt', className: 'uwh-item' }, pair))
+          children.push(h('span', { key: 'bt', className: 'uwh-item' },
+            showBalance
+              ? (lowBalance
+                  ? h('a', { className: balanceClass, ...balanceAnchorProps }, balanceText)
+                  : balanceText)
+              : null,
+            showToday ? (showBalance ? '/' : '') + fmtMoney(today ? today.amount : null) : null,
+          ))
         }
         if (showPeak && countdown) {
           children.push(h('span', { key: 'p', className: 'uwh-item ' + peakClass }, countdown))
         }
       } else {
         if (showBalance) {
-          children.push(h('span', { key: 'b', className: 'uwh-item' },
+          children.push(renderBalance('b',
             h('span', null, 'DeepSeek余额：'),
             h('span', { className: 'uwh-value' }, balanceText),
           ))
@@ -431,12 +576,14 @@ window.__ModuleLoader__.load({
 
       const titleParts = []
       if (showBalance && wallet) titleParts.push('DeepSeek余额 ' + symbol + fmtMoney(wallet.balance))
+      if (lowBalance) titleParts.push(rechargeHint)
       if (showToday && today) titleParts.push('今日已用 ' + fmtMoney(today.amount) + (today.partialDay ? '（部分观测）' : ''))
       if (showPeak && countdown) titleParts.push((peak.isPeak ? '高峰时段' : '错峰优惠') + ' ' + countdown + ' 后结束')
       if (failure) titleParts.push('（数据暂不可用）')
 
-      return h('div', {
-        ref: rootRef,
+      return h(React.Fragment, null,
+        h('div', {
+          ref: rootRef,
         className: 'uwh-topbar',
         'data-uwh': 'topbar',
         'aria-label': titleParts.join('，') || '用量信息',
@@ -450,7 +597,9 @@ window.__ModuleLoader__.load({
               letterSpacing: captionStyle.letterSpacing,
             }
           : undefined,
-      }, children)
+      }, children),
+        rechargeOpen ? h(RechargeOverlay, { onClose: () => setRechargeOpen(false) }) : null,
+      )
     }
 
     /* ── 每轮消耗 ───────────────────────────────────────────────── */
@@ -517,7 +666,7 @@ window.__ModuleLoader__.load({
     }
 
     /* ── 设置页 ─────────────────────────────────────────────────── */
-    const HUD_SETTINGS_FALLBACK = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true, hoverMotion: true }
+    const HUD_SETTINGS_FALLBACK = { version: 1, enabled: true, items: ['balance', 'today', 'peak'], turnCost: true, hideBalanceForNonOfficial: true, switchMotion: true, hoverMotion: true, warnBelow: 5 }
     const HUD_ITEMS = [
       { id: 'balance', title: '余额', desc: 'DeepSeek 账户实时余额' },
       { id: 'today', title: '今日已用', desc: '按余额观测累计的今日消费' },
@@ -623,6 +772,34 @@ window.__ModuleLoader__.load({
               onChange: () => toggleItem(item.id),
             }),
           )),
+        ),
+        h('div', { className: 'uwh-set-card' },
+          h('div', { className: 'uwh-set-row' + (enabled ? '' : ' is-dim') },
+            h('div', { className: 'uwh-set-main' },
+              h('div', { className: 'uwh-set-title' }, '余额预警'),
+              h('div', { className: 'uwh-set-desc' }, '余额低于该金额时，标题栏余额变红；点击余额可直接打开充值页（填 0 关闭）'),
+            ),
+            h('div', { className: 'uwh-set-num-row' },
+              h('input', {
+                className: 'uwh-set-num',
+                type: 'number',
+                min: 0,
+                max: 1000000,
+                step: 0.5,
+                inputMode: 'decimal',
+                disabled: !enabled,
+                'aria-label': '余额预警金额（元）',
+                value: String(typeof settings.warnBelow === 'number' ? settings.warnBelow : 5),
+                onChange: (event) => {
+                  const raw = Number(event.target.value)
+                  const value = Number.isFinite(raw) ? Math.max(0, Math.min(1000000, Math.round(raw * 100) / 100)) : 0
+                  if (value === settings.warnBelow) return
+                  commit({ ...settings, warnBelow: value })
+                },
+              }),
+              h('span', { className: 'uwh-set-unit' }, '元'),
+            ),
+          ),
         ),
         h('div', { className: 'uwh-set-card' },
           h('div', { className: 'uwh-set-row' },

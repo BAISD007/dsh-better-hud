@@ -7,7 +7,7 @@
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4D6BFE)](https://github.com/deepseek-ai/deepseek-harness)
 [![GitHub stars](https://img.shields.io/github/stars/BAISD007/dsh-better-hud?style=flat)](https://github.com/BAISD007/dsh-better-hud)
 
-> 版本 0.2.1 · npm：[dsh-better-hud](https://www.npmjs.com/package/dsh-better-hud) · 设计取舍与阶段记录见 [ROUTE.md](https://github.com/BAISD007/dsh-better-hud/blob/main/ROUTE.md)。
+> 版本 0.2.2 · npm：[dsh-better-hud](https://www.npmjs.com/package/dsh-better-hud) · 设计取舍与阶段记录见 [ROUTE.md](https://github.com/BAISD007/dsh-better-hud/blob/main/ROUTE.md)。
 
 ---
 
@@ -43,6 +43,12 @@
 - 金额 = 该条消息的真实 usage × DeepSeek 峰谷价目表；鼠标悬停可看到 token 合计与当时是峰价/谷价。
 - 官方自带的 `用量 x.xM tok`、时间**保持原样**，插件不重复渲染。
 
+### 余额预警与充值
+
+- 设置里可填「余额预警」金额（默认 **¥5**，填 0 关闭）。余额低于该值时，标题栏的 `DeepSeek余额：¥ x.xx` **变红**，今日已用和峰谷倒计时保持原色。
+- 红色余额可直接点击：桌面端用官方同一条原生 Platform 视图通道（`window.dshPlatform.open('top-up')`）**在应用内打开充值页**，带 48px 返回栏；Web 部署没有这个桥时退化成新标签页打开 `https://platform.deepseek.com/top_up`。
+- 余额读取失败或拿不到数值时不变红；余额为负也会变红（更该提醒）。
+
 ### 会话切换动效
 
 - 切换会话（或首次打开）时，对话整体轻微上浮，消息逐行淡入错开出现；默认开启，可在设置里关掉。
@@ -67,6 +73,7 @@
 - 在标题栏显示用量信息（总开关）
 - 显示内容：余额 / 今日已用 / 峰谷倒计时（任意增删）
 - 显示每轮消耗（动作行那条 ¥）
+- 余额预警（低于该金额时标题栏余额变红，点击打开充值页；默认 5 元，0 关闭）
 - 会话切换动效（切换会话时对话整体淡入、消息逐行错开出现）
 - 会话悬停卡动效（侧边栏悬停卡的淡入 + 轻微缩放）
 - 当调用非 DeepSeek 官方模型时，不显示余额（默认开启）

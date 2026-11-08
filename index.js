@@ -15,7 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-const VERSION = '0.2.1'
+const VERSION = '0.2.2'
 const PLUGIN = 'dsh-better-hud'
 
 /** 账本位置：沿用 DSH_HOME（默认 ~/.dsh）。 */
@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = {
   hideBalanceForNonOfficial: true,
   switchMotion: true,
   hoverMotion: true,
+  warnBelow: 5,
 }
 let settingsCache = null
 
@@ -54,7 +55,14 @@ function sanitizeSettings(input, base) {
   const hoverMotion = input && typeof input.hoverMotion === 'boolean'
     ? input.hoverMotion
     : fallback.hoverMotion !== false
-  return { version: 1, enabled, items, turnCost, hideBalanceForNonOfficial, switchMotion, hoverMotion }
+  // 余额预警金额（元）：0 = 关闭；非法值回落默认，最多保留两位小数。
+  const rawWarn = input && (typeof input.warnBelow === 'number' || typeof input.warnBelow === 'string')
+    ? Number(input.warnBelow)
+    : fallback.warnBelow
+  const warnBelow = Number.isFinite(rawWarn)
+    ? Math.min(1000000, Math.max(0, Math.round(rawWarn * 100) / 100))
+    : fallback.warnBelow
+  return { version: 1, enabled, items, turnCost, hideBalanceForNonOfficial, switchMotion, hoverMotion, warnBelow }
 }
 
 function loadSettings() {
