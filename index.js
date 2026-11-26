@@ -15,6 +15,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { loadHolidays } from './lib/holidays.js'
+
 const VERSION = '0.2.1'
 const PLUGIN = 'dsh-better-hud'
 
@@ -138,23 +140,53 @@ function beijingParts(ms) {
 
 /** 高峰：工作日（不含法定节假日）9:00–12:00、14:00–18:00（北京时间）。 */
 const PEAK_HOURS = [[9, 12], [14, 18]]
-/** 法定节假日全天谷价；每年国务院公布次年安排后在这里补一年。v0.1 先留空。 */
-const HOLIDAYS = new Set([])
+/**
+ * 法定节假日全天谷价。表不再写死在代码里，由 lib/holidays.js 在 apply() 时载入：
+ * 随包 holidays.json 与 $DSH_HOME/usage-hud/holidays.json（覆盖用）取并集。
+ * 只影响「落在周一至周五的放假日」；周末本来就走谷价，调休补班的周末官方也算谷价。
+ */
+let holidays = new Set()
+let holidayMeta = null
+
+function useHolidays(days) {
+  holidays = days instanceof Set ? days : new Set(days || [])
+  return holidays
+}
+
+function holidayInfo() {
+  if (!holidayMeta) return null
+  return {
+    years: holidayMeta.years,
+    weekdayDays: holidayMeta.weekdayDays,
+    sources: holidayMeta.sources,
+  }
+}
 
 function isPeak(ms) {
   const p = beijingParts(ms)
   if (p.dow === 0 || p.dow === 6) return false
-  if (HOLIDAYS.has(beijingDay(ms))) return false
+  if (holidays.has(beijingDay(ms))) return false
   return PEAK_HOURS.some(([start, end]) => p.hour >= start && p.hour < end)
 }
 
-/** 下一个峰谷切换时刻（epoch ms）；按分钟扫描，切换点都在整分。 */
+/**
+ * 下一个峰谷切换时刻（epoch ms）。
+ * 状态只会在 09:00 / 12:00 / 14:00 / 18:00 这些分界上变化（周末与节假日整天不切换），
+ * 所以只扫候选点：原来按分钟硬扫 8 天，遇到春节这类 9 连休会扫空返回 null，顶栏就不画倒计时了。
+ */
 function nextPeakChangeAt(ms) {
   const base = Math.floor(Number(ms) / 60000) * 60000
   const cur = isPeak(base)
-  for (let i = 1; i <= 8 * 24 * 60; i += 1) {
-    const candidate = base + i * 60000
-    if (isPeak(candidate) !== cur) return candidate
+  const DAY = 24 * 60 * 60000
+  const OFFSET = 8 * 60 * 60000
+  const dayStart = Math.floor((base + OFFSET) / DAY) * DAY - OFFSET
+  const HOUR = 60 * 60000
+  for (let day = 0; day <= 400; day += 1) {
+    const midnight = dayStart + day * DAY
+    for (const candidate of [midnight + 9 * HOUR, midnight + 12 * HOUR, midnight + 14 * HOUR, midnight + 18 * HOUR]) {
+      if (candidate <= base) continue
+      if (isPeak(candidate) !== cur) return candidate
+    }
   }
   return null
 }
@@ -366,6 +398,22 @@ export function apply(ctx) {
 
   try { loadLedger() } catch (error) { logger?.warn?.(`${PLUGIN}: ledger load failed: ${error?.message || error}`) }
 
+  // 节假日表：读失败就按空表继续（退化成「按工作日高峰」，不会让 Host 起不来）。
+  try {
+    const loaded = loadHolidays(LEDGER_DIR)
+    useHolidays(loaded.days)
+    holidayMeta = loaded
+    if (loaded.sources.length > 0) {
+      logger?.info?.(`${PLUGIN}: holidays ${loaded.years.join(',') || 'none'} (${loaded.weekdayDays} weekday days) from ${loaded.sources.join('+')}`)
+    }
+    const year = beijingDay().slice(0, 4)
+    if (!loaded.years.includes(year)) {
+      logger?.warn?.(`${PLUGIN}: no holiday table for ${year}, holidays are priced as peak; add it to ${path.join(LEDGER_DIR, 'holidays.json')}`)
+    }
+  } catch (error) {
+    logger?.warn?.(`${PLUGIN}: holiday table load failed: ${error?.message || error}`)
+  }
+
   // 跟踪当前模型（不含子代理），供顶部栏判断是否显示余额。
   try {
     ctx.effect(() => ctx.on('session/event', (session, event) => noteModelEvent(session, event)), `${PLUGIN}: track current model`)
@@ -468,6 +516,7 @@ export function apply(ctx) {
         peak: { isPeak: isPeak(now), nextChangeAt: nextPeakChangeAt(now), now },
         settings: loadSettings(),
         currentModel: currentModelInfo(),
+        holidays: holidayInfo(),
         usageUrl: balance.usageUrl || null,
         updatedAt: now,
       })
@@ -499,6 +548,7 @@ export function apply(ctx) {
         ok: true,
         settings: loadSettings(),
         currentModel: currentModelInfo(),
+        holidays: holidayInfo(),
         peak: { isPeak: isPeak(now), nextChangeAt: nextPeakChangeAt(now), now },
       })
     } catch (error) {
@@ -576,3 +626,16 @@ export function apply(ctx) {
 }
 
 export default { apply }
+
+/** 纯函数导出，只给 test/peak.test.mjs 用；插件契约只认 default.apply。 */
+export const __test = {
+  beijingDay,
+  beijingParts,
+  isPeak,
+  nextPeakChangeAt,
+  costOf,
+  priceFor,
+  useHolidays,
+  loadHolidays,
+  holidayInfo,
+}
